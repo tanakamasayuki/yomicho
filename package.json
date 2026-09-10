@@ -1,0 +1,72 @@
+{
+  "name": "yomicho",
+  "version": "0.0.0",
+  "description": "Furigana (ruby) annotation for Japanese text with a translation-memory workflow.",
+  "type": "module",
+  "license": "MIT",
+  "author": "TANAKA Masayuki",
+  "sideEffects": false,
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "types": "types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    },
+    "./node": {
+      "types": "./types/node/index.d.ts",
+      "default": "./src/node/index.js"
+    },
+    "./browser": {
+      "types": "./types/browser/index.d.ts",
+      "default": "./src/browser/index.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "yomicho": "./bin/yomicho.js"
+  },
+  "files": [
+    "bin",
+    "docs",
+    "src",
+    "types",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "japanese",
+    "furigana",
+    "ruby",
+    "yomigana",
+    "annotation",
+    "translation-memory",
+    "markdown"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tanakamasayuki/yomicho.git"
+  },
+  "bugs": {
+    "url": "https://github.com/tanakamasayuki/yomicho/issues"
+  },
+  "homepage": "https://tanakamasayuki.github.io/yomicho/",
+  "scripts": {
+    "test": "node --test",
+    "typecheck": "tsc --noEmit",
+    "types": "tsc -p tsconfig.types.json",
+    "build:site": "node scripts/build-site.js",
+    "check": "npm run test && npm run typecheck",
+    "prepack": "npm run types"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0"
+  }
+}
