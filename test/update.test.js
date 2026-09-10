@@ -1,7 +1,10 @@
 // @ts-check
 import { test } from 'node:test';
 import { deepStrictEqual, strictEqual } from 'node:assert/strict';
-import { annotate, buildMatcher, formatDict, intlWords, parseDict, resolveDicts, update } from '../src/index.js';
+import {
+  annotate, buildMatcher, dropCache, formatDict, intlWords, mergeReadings,
+  parseDict, resolveDicts, unresolvedTsv, update,
+} from '../src/index.js';
 
 /**
  * @param {string} text
@@ -91,4 +94,42 @@ test('原稿辞書だけで build しても参照辞書つきと同じ出力に�
   const fromBook = annotate(text, buildMatcher(r.book.values())).text;
   const fromRefs = annotate(text, buildMatcher(parseDict(ref).entries.values())).text;
   strictEqual(fromBook, fromRefs);
+});
+
+test('要対応の行だけを TSV で出す', () => {
+  const r = run('新型の未知を発表した。', '確定\tかくてい\n', '発表\tはっぴょう\n');
+  const tsv = unresolvedTsv(r.book);
+  const rows = tsv.split('\n').filter(Boolean).map((line) => line.split('\t'));
+  deepStrictEqual(rows.map((c) => c[0]).sort(), ['新型', '未知'].sort(), '確定済みと参照辞書から引けた行は出さない');
+  deepStrictEqual(rows.find((c) => c[0] === '未知'), ['未知', '', '新型の{未知}を発表した。']);
+});
+
+test('戻ってきた読みは必ず + で入る', () => {
+  const r = run('新型の未知を発表した。', '', '');
+  const m = mergeReadings(r.book, '未知\tみち\t新型の{未知}を発表した。\n');
+  strictEqual(m.book.get('未知')?.state, '+');
+  strictEqual(m.book.get('未知')?.reading, 'みち');
+  deepStrictEqual(m.applied, ['未知']);
+});
+
+test('記号が付いていても付いていなくても受ける', () => {
+  const r = run('新型の未知を発表した。', '', '');
+  strictEqual(mergeReadings(r.book, '未知\t+みち\n').book.get('未知')?.reading, 'みち');
+  strictEqual(mergeReadings(r.book, '未知\tみち\n').book.get('未知')?.reading, 'みち');
+});
+
+test('人の判断が入っている行は上書きしない', () => {
+  const book = parseDict('日本橋\tにほんばし\n無視\t#\n').entries;
+  const m = mergeReadings(book, '日本橋\tでたらめ\n無視\tでたらめ\n知らない語\tよみ\n');
+  strictEqual(m.book.get('日本橋')?.reading, 'にほんばし');
+  strictEqual(m.book.get('無視')?.state, '#');
+  deepStrictEqual(m.skipped.sort(), ['日本橋', '無視']);
+  deepStrictEqual(m.unknown, ['知らない語']);
+});
+
+test('--force は機械のキャッシュだけを捨てる', () => {
+  const book = parseDict(['確定\tかくてい', '無視\t#', '除外\t!', '引用\t>いんよう', '未承認\t+みしょうにん', '未定\t'].join('\n')).entries;
+  const d = dropCache(book);
+  deepStrictEqual(d.dropped.sort(), ['引用', '除外']);
+  deepStrictEqual([...d.book.keys()].sort(), ['未定', '未承認', '確定', '無視'].sort());
 });

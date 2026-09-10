@@ -2,7 +2,7 @@
 // 原稿辞書の更新。docs/spec.ja.md 2章・4.3・6章。
 // 既存の行は書き換えない。足りない見出しを足し、要対応の行のスニペットだけ更新する。
 import { collectCandidates } from './collect.js';
-import { parseHeadword } from './dict.js';
+import { parseHeadword, SIGILS } from './dict.js';
 import { tokenize } from './match.js';
 import { protectedRanges } from './protect.js';
 
@@ -55,7 +55,7 @@ export function makeSnippet(text, start, end, width) {
   const nr = text.indexOf('\n', end);
   if (nr >= 0 && nr < to) to = nr;
   const body = text.slice(from, start) + '{' + text.slice(start, end) + '}' + text.slice(end, to);
-  return body.replace(/[\t\r\n]+/g, ' ').trim();
+  return body.replace(/\s+/g, ' ').trim();
 }
 
 /** 見出しに含まれる文字がすべて既知なら true（8.1） */
@@ -135,4 +135,68 @@ export function update({ text, book, refs, matcher, segmenter, known, width = 12
     }
   }
   return { book: out, added, unresolved };
+}
+
+/**
+ * 要対応の行を TSV として書き出す（3.5）。そのまま貼って、そのまま戻せる形。
+ * この原稿に出現した行だけを出す（スニペットが付いている行）。
+ * @param {Map<string, Entry>} book
+ * @returns {string}
+ */
+export function unresolvedTsv(book) {
+  const rows = [...book.values()].filter((e) => needsAttention(e) && e.snippet !== '');
+  rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  return rows.map((e) => `${e.key}\t${e.state}${e.reading}\t${e.snippet}`).join('\n') + (rows.length ? '\n' : '');
+}
+
+/**
+ * 外から戻ってきた読みを取り込む（3.5）。
+ * 必ず `+`（未承認）として入れ、人の判断が入っている行は上書きしない。
+ * @param {Map<string, Entry>} book
+ * @param {string} tsv
+ * @returns {{book: Map<string, Entry>, applied: string[], skipped: string[], unknown: string[]}}
+ */
+export function mergeReadings(book, tsv) {
+  /** @type {Map<string, Entry>} */
+  const out = new Map(book);
+  /** @type {string[]} */ const applied = [];
+  /** @type {string[]} */ const skipped = [];
+  /** @type {string[]} */ const unknown = [];
+  for (const line of tsv.split(/\r?\n/)) {
+    if (line.trim() === '') continue;
+    const cols = line.split('\t');
+    const key = cols[0];
+    const field = cols[1] ?? '';
+    const reading = SIGILS.has(field.charAt(0)) ? field.slice(1) : field;
+    if (reading === '') continue;
+    const existing = out.get(key);
+    if (!existing) {
+      unknown.push(key);
+      continue;
+    }
+    if (!needsAttention(existing)) {
+      skipped.push(key);
+      continue;
+    }
+    out.set(key, { ...existing, state: '+', reading });
+    applied.push(key);
+  }
+  return { book: out, applied, skipped, unknown };
+}
+
+/**
+ * 機械のキャッシュ（`>` と `!`）を捨てる。`--force` の前半（7.2）。
+ * 人の判断（記号なし・`#`）と作業中（`+`・空欄）には触れない。
+ * @param {Map<string, Entry>} book
+ * @returns {{book: Map<string, Entry>, dropped: string[]}}
+ */
+export function dropCache(book) {
+  /** @type {Map<string, Entry>} */
+  const out = new Map();
+  /** @type {string[]} */ const dropped = [];
+  for (const [key, entry] of book) {
+    if (entry.state === '>' || entry.state === '!') dropped.push(key);
+    else out.set(key, entry);
+  }
+  return { book: out, dropped };
 }
