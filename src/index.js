@@ -8,3 +8,5 @@ export { buildMatcher, matchAt, tokenize, atomicMap } from './match.js';
 export { protectedRanges, mergeRanges } from './protect.js';
 export { segment, alignOkurigana, assign, renderHtmlRuby } from './ruby.js';
 export { annotate, stripRuby } from './annotate.js';
+export { collectCandidates, kanjiRun, intlWords, intlMergedHan } from './collect.js';
+export { update, scanEntries, makeSnippet, needsAttention } from './update.js';
