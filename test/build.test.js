@@ -1,6 +1,6 @@
 // @ts-check
 import { test } from 'node:test';
-import { strictEqual } from 'node:assert/strict';
+import { deepStrictEqual, strictEqual } from 'node:assert/strict';
 import { annotate, assign, buildMatcher, parseDict, renderHtmlRuby, stripRuby } from '../src/index.js';
 
 /** @param {string} tsv */
@@ -80,4 +80,18 @@ test('往復しても原稿が壊れず、二度掛けても変わらない', ()
   const once = f(stripRuby(src));
   strictEqual(stripRuby(once), stripRuby(src));
   strictEqual(f(stripRuby(once)), once);
+});
+
+test('送り仮名まで含めた読みと、文脈指定は同じ出力になる', () => {
+  const a = build('持っ\tもっ\n');
+  const b = build('{持}っ\tも\n');
+  strictEqual(a('本を持っている。'), '本を<ruby>持<rt>も</rt></ruby>っている。');
+  strictEqual(b('本を持っている。'), '本を<ruby>持<rt>も</rt></ruby>っている。');
+});
+
+test('割り当てられない読みは要確認として報告する', () => {
+  const { entries } = parseDict('持っ\tも\n切っ\tきっ\n');
+  const r = annotate('本を持っている。果物を切っている。', buildMatcher(entries.values()));
+  deepStrictEqual([...r.stats.unaligned.keys()], ['持っ'], '持っ に も だけでは っ にルビが乗る');
+  strictEqual(r.text.includes('<ruby>持っ<rt>も</rt></ruby>'), true, '出力自体は安全側に倒す');
 });

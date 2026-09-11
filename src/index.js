@@ -6,7 +6,7 @@
 export { parseDict, formatDict, parseHeadword, parseReading, resolveDicts, producesRuby, participatesInMatch, sortRank, SIGILS } from './dict.js';
 export { buildMatcher, matchAt, tokenize, atomicMap } from './match.js';
 export { protectedRanges, mergeRanges } from './protect.js';
-export { segment, alignOkurigana, assign, renderHtmlRuby } from './ruby.js';
+export { segment, alignOkurigana, assign, hasKana, renderHtmlRuby } from './ruby.js';
 export { annotate, stripRuby } from './annotate.js';
 export { collectCandidates, kanjiRun, intlWords, intlMergedHan } from './collect.js';
-export { update, scanEntries, makeSnippet, needsAttention, unresolvedTsv, mergeReadings, dropCache } from './update.js';
+export { update, scanEntries, makeSnippet, trimEdges, needsAttention, unresolvedTsv, mergeReadings, dropCache } from './update.js';

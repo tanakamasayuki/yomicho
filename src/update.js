@@ -12,7 +12,7 @@ import { protectedRanges } from './protect.js';
 
 /** 人の手を待っている行か（3.6 の作業ゾーン） */
 export function needsAttention(/** @type {Entry} */ e) {
-  return e.state === '+' || (e.state === '' && e.reading === '');
+  return e.state === '+' || e.state === '?' || (e.state === '' && e.reading === '');
 }
 
 /**
@@ -55,11 +55,19 @@ export function makeSnippet(text, start, end, width) {
   const nr = text.indexOf('\n', end);
   if (nr >= 0 && nr < to) to = nr;
   const body = text.slice(from, start) + '{' + text.slice(start, end) + '}' + text.slice(end, to);
-  return body.replace(/\s+/g, ' ').trim();
+  return trimEdges(body.replace(/\s+/g, ' '));
+}
+
+/** 固定文字数で切ると端に句読点が残るので落とす。`、先に予算を…と、` → `先に予算を…と` */
+const EDGE = /^[\s、。，．・…‥]+|[\s、。，．・…‥]+$/g;
+
+/** @param {string} text */
+export function trimEdges(text) {
+  return text.replace(EDGE, '');
 }
 
 /**
- * 読みを求めず `?` として記録するだけにするか（7.2）。
+ * 読みを求めず `*` として記録するだけにするか（7.2）。
  *
  * 数字を含む英数字トークンは型番とみなす。`BMP280` `SHT40` `U001-D` `10cm` `0xFFE01F` の類で、
  * 普通ルビを振らない。英字だけのトークン（`KeyBridge` `Arduino`）は名前なので作業ゾーンに残す。
@@ -73,7 +81,7 @@ export function makeSnippet(text, start, end, width) {
  * 「新しく出てきた英数字混じりは型番」と賭けるほうが当たる。
  *
  * どちらにしても出力は変わらない（5.3 によりトークンの一部にはルビが付かない）。
- * 読ませたくなったら `?` を消せばよい。
+ * 読ませたくなったら `*` を消せばよい。
  *
  * @param {string} text
  * @param {boolean} full
@@ -115,7 +123,7 @@ function allKnown(/** @type {string} */ pattern, /** @type {Set<string>} */ know
  * @param {Matcher} args.matcher book と refs を重ねたマッチャ
  * @param {Segmenter} args.segmenter
  * @param {Set<string>} [args.known] 既知文字リスト
- * @param {boolean} [args.full] 通常は捨てる候補も `?` として記録する
+ * @param {boolean} [args.full] 通常は捨てる候補も `*` として記録する
  * @param {number} [args.width] スニペットの前後文字数
  * @returns {UpdateResult}
  */
@@ -149,21 +157,25 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
     const base = { key: c.text, ...parseHeadword(c.text), snippet: '', order: 0, line: 0 };
     if (ref) out.set(c.text, { ...base, state: '>', reading: ref.reading });
     else if (known && allKnown(c.text, known)) out.set(c.text, { ...base, state: '!', reading: '' });
-    else if (isQuiet(c.text, full)) out.set(c.text, { ...base, state: '?', reading: '' });
+    else if (isQuiet(c.text, full)) out.set(c.text, { ...base, state: '*', reading: '' });
     else out.set(c.text, { ...base, state: '', reading: '' });
     added.push(c.text);
   }
 
-  // 3. スニペット。要対応かつこの原稿に出た行にだけ付け、それ以外からは外す
+  // 3. スニペットと `?`。要対応かつこの原稿に出た行に付け、それ以外からは外す。
+  //    読みが未定の行は、今回出ていれば `?`、出ていなければ空欄になる。
+  //    `?` があることで、3列目があっても書き込み位置が目で分かる。
   /** @type {string[]} */
   const unresolved = [];
   for (const [key, entry] of out) {
     const at = seen.get(key);
     if (needsAttention(entry) && at) {
       entry.snippet = makeSnippet(text, at.start, at.end, width);
+      if (entry.state === '') entry.state = '?';
       unresolved.push(key);
-    } else if (entry.snippet) {
-      entry.snippet = '';
+    } else {
+      if (entry.snippet) entry.snippet = '';
+      if (entry.state === '?') entry.state = '';
     }
   }
   return { book: out, added, unresolved };
@@ -217,7 +229,7 @@ export function mergeReadings(book, tsv) {
 }
 
 /**
- * 機械のキャッシュ（`>` `!` `?`）を捨てる。`--force` の前半（7.5）。
+ * 機械のキャッシュ（`>` `!` `*`）を捨てる。`--force` の前半（7.5）。
  * 人の判断（記号なし・`#`）と作業中（`+`・空欄）には触れない。
  * @param {Map<string, Entry>} book
  * @returns {{book: Map<string, Entry>, dropped: string[]}}
@@ -227,7 +239,7 @@ export function dropCache(book) {
   const out = new Map();
   /** @type {string[]} */ const dropped = [];
   for (const [key, entry] of book) {
-    if (entry.state === '>' || entry.state === '!' || entry.state === '?') dropped.push(key);
+    if (entry.state === '>' || entry.state === '!' || entry.state === '*') dropped.push(key);
     else out.set(key, entry);
   }
   return { book: out, dropped };

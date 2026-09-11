@@ -10,6 +10,8 @@ test('状態記号を読み欄の先頭から取り出す', () => {
   deepStrictEqual(parseReading('+にほんばし'), { state: '+', reading: 'にほんばし' });
   deepStrictEqual(parseReading('>にほんばし'), { state: '>', reading: 'にほんばし' });
   deepStrictEqual(parseReading('!'), { state: '!', reading: '' });
+  deepStrictEqual(parseReading('*'), { state: '*', reading: '' });
+  deepStrictEqual(parseReading('?'), { state: '?', reading: '' });
   deepStrictEqual(parseReading(''), { state: '', reading: '' });
 });
 
@@ -39,9 +41,14 @@ test('3列目をスニペットとして読む', () => {
   strictEqual(entries.get('未知製品')?.snippet, '新型の{未知製品}を発表した');
 });
 
-test('確定 → # → ! → > → + → 空欄 の順に並べる', () => {
-  const { entries } = parseDict(['e\t', 'd\t+よみ', 'c\t>よみ', 'b\t!', 'a2\t#', 'a1\tよみ'].join('\n'));
-  strictEqual(formatDict(entries.values()), 'a1\tよみ\na2\t#\nb\t!\nc\t>よみ\nd\t+よみ\ne\t\n');
+test('確定 → # → ! → * → > → 空欄 → + → ? の順に並べる', () => {
+  // 下端が作業ゾーン。もっとも急ぐ `?`（今回出ている未解決）を最後に置く。
+  const src = ['f\t?', 'e\t+よみ', 'd\t', 'c\t>よみ', 'b2\t*', 'b1\t!', 'a2\t#', 'a1\tよみ'];
+  const { entries } = parseDict(src.join('\n'));
+  strictEqual(
+    formatDict(entries.values()),
+    'a1\tよみ\na2\t#\nb1\t!\nb2\t*\nc\t>よみ\nd\t\ne\t+よみ\nf\t?\n',
+  );
 });
 
 test('探索順に重ね、最初に見つかったものを採る', () => {

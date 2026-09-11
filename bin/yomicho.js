@@ -57,7 +57,12 @@ if (command === 'strip') {
   emit(source);
 } else if (command === 'build') {
   const book = readBook();
-  emit(annotate(source, buildMatcher(book.values())).text);
+  const result = annotate(source, buildMatcher(book.values()));
+  for (const key of result.stats.unaligned.keys()) {
+    const reading = book.get(key)?.reading ?? '';
+    process.stderr.write(`要確認: ${key}\t${reading}  読みを漢字に割り当てられません。送り仮名まで含めて書いてください\n`);
+  }
+  emit(result.text);
 } else if (command === 'unresolved') {
   process.stdout.write(unresolvedTsv(readBook()));
 } else if (command === 'merge') {

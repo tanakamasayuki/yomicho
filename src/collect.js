@@ -20,6 +20,44 @@ const ATOMIC = /[A-Za-z0-9_+.-]*[A-Za-z][A-Za-z0-9_+.-]*/g;
 /** --full のとき。英字を含まない数値のかたまりも拾う */
 const ATOMIC_FULL = /[A-Za-z0-9_+.-]*[A-Za-z0-9][A-Za-z0-9_+.-]*/g;
 const KATAKANA = /^[ァ-ヺー・]+$/;
+const HIRAGANA = /[ぁ-ゖー]/;
+
+/**
+ * 助詞・助動詞。1文字漢字の直後がこれ「そのもの」なら、漢字は独立した語である。
+ * 一致しなければ送り仮名とみなす（`何|も` は助詞、`積|もらせる` は送り仮名）。
+ */
+const PARTICLES = new Set([
+  'を', 'が', 'は', 'に', 'へ', 'と', 'で', 'も', 'の', 'や', 'か', 'ね', 'よ',
+  'から', 'まで', 'より', 'など', 'ほど', 'だけ', 'しか', 'でも',
+  'には', 'では', 'への', 'にも', 'とも', 'とは', 'からは', 'までは',
+]);
+
+/**
+ * 1文字の漢字に送り仮名を1文字だけ足す。
+ *
+ * `Intl.Segmenter` は動詞の語幹を裸で出すことがある（`分|から` `切|って` `運|ん`）。
+ * 裸の `分` を登録すると `十分` や `分析` まで わ と読んでしまうので、送り仮名を付けて
+ * `分か` にする。1文字だけ足すのは、活用形をまたいで効かせるため
+ * （`切っ` は 切った・切って・切っている のどれにも当たる）。
+ *
+ * 名詞＋助詞（`本|を` `風|が`）は繋げない。
+ *
+ * @param {string} span
+ * @param {Array<{text: string, start: number, end: number}>} words
+ */
+function attachOkurigana(span, words) {
+  const HAN_ONE = /^\p{Script=Han}$/u;
+  return words.map((w) => {
+    if (!HAN_ONE.test(w.text)) return w;
+    let run = '';
+    for (let i = w.end; i < span.length && run.length < 6; i++) {
+      if (!HIRAGANA.test(span[i])) break;
+      run += span[i];
+    }
+    if (run === '' || PARTICLES.has(run)) return w;
+    return { text: w.text + run[0], start: w.start, end: w.end + 1 };
+  });
+}
 
 /** 漢字の連続をひとかたまりとする。依存なし。送り仮名は拾えない。 */
 export const kanjiRun = /** @type {Segmenter} */ (
@@ -80,7 +118,7 @@ export function intlMergedHan(locale = 'ja') {
  * @param {string} text
  * @param {Matcher} matcher
  * @param {Segmenter} segmenter
- * @param {boolean} [full] 漢字を含まない語や数値も拾う（`?` として記録するため）
+ * @param {boolean} [full] 漢字を含まない語や数値も拾う（`*` として記録するため）
  * @returns {Candidate[]}
  */
 export function collectCandidates(text, matcher, segmenter, full = false) {
@@ -118,7 +156,7 @@ export function collectCandidates(text, matcher, segmenter, full = false) {
       if (free && spanStart < 0) spanStart = i;
       else if (!free && spanStart >= 0) {
         const span = chunk.slice(spanStart, i);
-        for (const w of segmenter(span)) {
+        for (const w of attachOkurigana(span, segmenter(span))) {
           // 漢字を含まない語は通常は捨てる。--full ではカタカナ語だけ拾う。
           // ひらがなはそのまま読めるので、どちらでも拾わない。
           if (!HAN.test(w.text) && !(full && w.text.length >= 2 && KATAKANA.test(w.text))) continue;

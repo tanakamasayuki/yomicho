@@ -3,7 +3,7 @@
 import { producesRuby } from './dict.js';
 import { tokenize } from './match.js';
 import { protectedRanges } from './protect.js';
-import { assign, renderHtmlRuby } from './ruby.js';
+import { assign, hasKana, renderHtmlRuby } from './ruby.js';
 
 /** @typedef {import('./dict.js').Entry} Entry */
 /** @typedef {import('./match.js').Matcher} Matcher */
@@ -14,6 +14,7 @@ import { assign, renderHtmlRuby } from './ruby.js';
  * @property {number} grouped               グループルビの数
  * @property {number} mono                  分割できたものの数
  * @property {Map<string, number>} silent   マッチしたがルビを出さなかったエントリ
+ * @property {Map<string, number>} unaligned 読みを漢字に割り当てられなかったエントリ（要確認）
  */
 
 /**
@@ -23,7 +24,7 @@ import { assign, renderHtmlRuby } from './ruby.js';
  */
 export function annotate(text, matcher) {
   /** @type {AnnotateStats} */
-  const stats = { used: new Map(), grouped: 0, mono: 0, silent: new Map() };
+  const stats = { used: new Map(), grouped: 0, mono: 0, silent: new Map(), unaligned: new Map() };
   const bump = (/** @type {Map<string, number>} */ m, /** @type {string} */ k) => m.set(k, (m.get(k) ?? 0) + 1);
 
   const convert = (/** @type {string} */ chunk) => {
@@ -38,10 +39,12 @@ export function annotate(text, matcher) {
         out += token.text;
         continue;
       }
-      const { parts, grouped } = assign(token.text, token.entry.reading);
+      const { parts, grouped, aligned } = assign(token.text, token.entry.reading);
       bump(stats.used, token.entry.key);
       if (grouped) stats.grouped++;
       else stats.mono++;
+      // 見出しに仮名があるのに割り当てられなかった＝読みの書き間違いの疑い
+      if (!aligned && hasKana(token.text)) bump(stats.unaligned, token.entry.key);
       out += renderHtmlRuby(parts);
     }
     return out;

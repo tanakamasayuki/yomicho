@@ -1,10 +1,10 @@
 // @ts-check
 // 辞書ファイルの解析と整形。docs/spec.ja.md 3章。
 
-/** @typedef {'' | '>' | '+' | '#' | '!' | '?'} State */
+/** @typedef {'' | '>' | '+' | '#' | '!' | '*' | '?'} State */
 
 /** 読み欄の先頭に置ける状態記号 */
-export const SIGILS = new Set(['>', '+', '#', '!', '?']);
+export const SIGILS = new Set(['>', '+', '#', '!', '*', '?']);
 
 /**
  * 辞書の1エントリ。
@@ -100,7 +100,8 @@ export function parseDict(text, order = 0) {
  */
 export function sortRank(e) {
   if (e.state === '') return e.reading === '' ? 5 : 0;
-  return { '#': 1, '!': 2, '?': 3, '>': 4, '+': 5 }[e.state];
+  // 5 は「未解決だが今回の原稿には出ていない」。作業ゾーン（6=+, 7=?）の手前に置く
+  return { '#': 1, '!': 2, '*': 3, '>': 4, '+': 6, '?': 7 }[e.state];
 }
 
 /**
@@ -141,9 +142,9 @@ export function producesRuby(/** @type {Entry} */ e) {
 
 /**
  * 照合に参加するか。
- * `?` は「語かどうか怪しいので記録しただけ」なので照合しない。
+ * `*` は「語かどうか怪しいので記録しただけ」なので照合しない。
  * 参加させると、非語が中の実在する語を巻き添えにしてしまう。
  */
 export function participatesInMatch(/** @type {Entry} */ e) {
-  return e.state !== '?';
+  return e.state !== '*';
 }

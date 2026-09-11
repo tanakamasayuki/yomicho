@@ -32,12 +32,12 @@ test('参照辞書にある語は > を付けて取り込む', () => {
   strictEqual(r.book.has('東京'), false, '原稿に出ない語は取り込まない');
 });
 
-test('どこにも無い語は空欄で足し、スニペットを付ける', () => {
+test('どこにも無い語は ? で足し、スニペットを付ける', () => {
   const r = run('新型の未知を発表した。', '', '');
   const e = r.book.get('未知');
-  strictEqual(e?.state, '');
+  strictEqual(e?.state, '?', '今回の原稿に出ているので ?。3列目があっても書き込み位置が見える');
   strictEqual(e?.reading, '');
-  strictEqual(e?.snippet, '新型の{未知}を発表した。');
+  strictEqual(e?.snippet, '新型の{未知}を発表した');
   deepStrictEqual(r.unresolved.includes('未知'), true);
 });
 
@@ -54,17 +54,25 @@ test('既存の行は書き換えない', () => {
   strictEqual(r.added.includes('日本橋'), false);
 });
 
-test('空欄の行も書き換えず、参照辞書から引き直さない', () => {
+test('空欄の行も読みは書き換えず、参照辞書から引き直さない', () => {
   const r = run('日本橋へ行く。', '日本橋\t\n', '日本橋\tにほんばし\n');
-  strictEqual(r.book.get('日本橋')?.reading, '');
-  strictEqual(r.book.get('日本橋')?.state, '');
+  strictEqual(r.book.get('日本橋')?.reading, '', '読みには触れない');
+  strictEqual(r.book.get('日本橋')?.state, '?', '今回出ているので ? が付く');
+});
+
+test('原稿から消えた語は ? が外れて空欄に戻る', () => {
+  const first = run('日本橋へ行く。', '', '');
+  strictEqual(first.book.get('日本橋')?.state, '?');
+  const second = run('別の話。', formatDict(first.book.values()), '');
+  strictEqual(second.book.get('日本橋')?.state, '');
+  strictEqual(second.book.get('日本橋')?.snippet, '');
 });
 
 test('読みが埋まればスニペットが外れる', () => {
   const text = '新型の未知を発表した。';
   const first = run(text, '', '');
   strictEqual(first.book.get('未知')?.snippet !== '', true);
-  const filled = formatDict(first.book.values()).replace('未知\t\t', '未知\tみち\t');
+  const filled = formatDict(first.book.values()).replace('未知\t?\t', '未知\tみち\t');
   const second = run(text, filled, '');
   strictEqual(second.book.get('未知')?.snippet, '');
   strictEqual(second.unresolved.includes('未知'), false);
@@ -74,7 +82,7 @@ test('既知文字だけの語には ! を付ける', () => {
   const known = new Set(['山', '川']);
   const r = run('山川と発表。', '', '', known);
   strictEqual(r.book.get('山川')?.state, '!');
-  strictEqual(r.book.get('発表')?.state, '');
+  strictEqual(r.book.get('発表')?.state, '?');
 });
 
 test('update は冪等', () => {
@@ -101,7 +109,7 @@ test('要対応の行だけを TSV で出す', () => {
   const tsv = unresolvedTsv(r.book);
   const rows = tsv.split('\n').filter(Boolean).map((line) => line.split('\t'));
   deepStrictEqual(rows.map((c) => c[0]).sort(), ['新型', '未知'].sort(), '確定済みと参照辞書から引けた行は出さない');
-  deepStrictEqual(rows.find((c) => c[0] === '未知'), ['未知', '', '新型の{未知}を発表した。']);
+  deepStrictEqual(rows.find((c) => c[0] === '未知'), ['未知', '?', '新型の{未知}を発表した']);
 });
 
 test('戻ってきた読みは必ず + で入る', () => {
@@ -134,7 +142,7 @@ test('--force は機械のキャッシュだけを捨てる', () => {
   deepStrictEqual([...d.book.keys()].sort(), ['未定', '未承認', '確定', '無視'].sort());
 });
 
-test('--full はカタカナ語と数値を ? として記録する', () => {
+test('--full はカタカナ語と数値を * として記録する', () => {
   const text = '10Aのセンサユニットを280個。';
   const normal = update({
     text, book: new Map(), refs: new Map(),
@@ -146,41 +154,41 @@ test('--full はカタカナ語と数値を ? として記録する', () => {
     text, book: new Map(), refs: new Map(),
     matcher: buildMatcher([]), segmenter: intlWords(), full: true,
   });
-  strictEqual(full.book.get('280')?.state, '?');
-  strictEqual(full.book.get('センサユニット')?.state, '?');
+  strictEqual(full.book.get('280')?.state, '*');
+  strictEqual(full.book.get('センサユニット')?.state, '*');
   strictEqual(full.unresolved.length, normal.unresolved.length, '作業ゾーンは増えない');
 });
 
-test('? は照合に参加しないので中の語を邪魔しない', () => {
-  const book = parseDict('センサユニット\t?\nセンサ\tせんさ\n').entries;
+test('* は照合に参加しないので中の語を邪魔しない', () => {
+  const book = parseDict('センサユニット\t*\nセンサ\tせんさ\n').entries;
   const out = annotate('センサユニット', buildMatcher(book.values())).text;
   strictEqual(out, '<ruby>センサ<rt>せんさ</rt></ruby>ユニット');
 });
 
-test('? を消すと次の update で作業ゾーンに入る', () => {
+test('* を消すと次の update で作業ゾーンに入る', () => {
   const text = 'センサユニットを使う。';
   const first = update({
     text, book: new Map(), refs: new Map(),
     matcher: buildMatcher([]), segmenter: intlWords(), full: true,
   });
-  strictEqual(first.book.get('センサユニット')?.snippet, '', '? にはスニペットを付けない');
-  const cleared = parseDict(formatDict(first.book.values()).replace('センサユニット\t?', 'センサユニット\t')).entries;
+  strictEqual(first.book.get('センサユニット')?.snippet, '', '* にはスニペットを付けない');
+  const cleared = parseDict(formatDict(first.book.values()).replace('センサユニット\t*', 'センサユニット\t')).entries;
   const second = update({
     text, book: cleared, refs: new Map(),
     matcher: buildMatcher(cleared.values()), segmenter: intlWords(), full: true,
   });
-  strictEqual(second.book.get('センサユニット')?.state, '');
-  strictEqual(second.book.get('センサユニット')?.snippet, '{センサユニット}を使う。');
+  strictEqual(second.book.get('センサユニット')?.state, '?');
+  strictEqual(second.book.get('センサユニット')?.snippet, '{センサユニット}を使う');
 });
 
-test('--force は ? も捨てる', () => {
-  const book = parseDict('確定\tかくてい\n収集\t?\n引用\t>いんよう\n').entries;
+test('--force は * も捨てる', () => {
+  const book = parseDict('確定\tかくてい\n収集\t*\n引用\t>いんよう\n').entries;
   const d = dropCache(book);
   deepStrictEqual(d.dropped.sort(), ['収集', '引用']);
   deepStrictEqual([...d.book.keys()], ['確定']);
 });
 
-test('数字を含むトークンは型番とみなして ?、英字だけは作業ゾーン', () => {
+test('数字を含むトークンは型番とみなして *、英字だけは作業ゾーン', () => {
   const text = 'BMP280 と 10cm と 0xFFE01F と .h と U001 と KeyBridge。';
   const r = update({
     text, book: new Map(), refs: new Map(),
@@ -188,10 +196,10 @@ test('数字を含むトークンは型番とみなして ?、英字だけは作
   });
   // 型番・量・生の値は聞かない
   for (const k of ['BMP280', 'U001', '10cm', '0xFFE01F', '.h']) {
-    strictEqual(r.book.get(k)?.state, '?', `${k} は ? になる`);
+    strictEqual(r.book.get(k)?.state, '*', `${k} は * になる`);
   }
   // 英字だけの名前は聞く
-  strictEqual(r.book.get('KeyBridge')?.state, '');
+  strictEqual(r.book.get('KeyBridge')?.state, '?');
 });
 
 test('参照辞書にあれば型番でも読みが付く', () => {
@@ -208,14 +216,26 @@ test('? にしても出力は変わらない（5.3 によりトークンの一�
   strictEqual(annotate(text, buildMatcher(blank.values())).text, text);
 });
 
-test('ドットを含むトークンも ?、ハイフンは名前に使われるので対象外', () => {
+test('ドットを含むトークンも *、ハイフンは名前に使われるので対象外', () => {
   const text = 'sketch.yaml と Serial.begin と E-Paper と KeyBridge。';
   const r = update({
     text, book: new Map(), refs: new Map(),
     matcher: buildMatcher([]), segmenter: intlWords(),
   });
-  strictEqual(r.book.get('sketch.yaml')?.state, '?');
-  strictEqual(r.book.get('Serial.begin')?.state, '?');
-  strictEqual(r.book.get('E-Paper')?.state, '', 'ハイフンは名前に使われる');
-  strictEqual(r.book.get('KeyBridge')?.state, '');
+  strictEqual(r.book.get('sketch.yaml')?.state, '*');
+  strictEqual(r.book.get('Serial.begin')?.state, '*');
+  strictEqual(r.book.get('E-Paper')?.state, '?', 'ハイフンは名前に使われる');
+  strictEqual(r.book.get('KeyBridge')?.state, '?');
+});
+
+test('スニペットの両端から句読点を落とす', () => {
+  const text = '次に多いのが、先に予算を決めてしまう場合である。予算から入ると、選択肢が消える。';
+  const r = update({
+    text, book: new Map(), refs: new Map(),
+    matcher: buildMatcher([]), segmenter: intlWords(),
+  });
+  const s = r.book.get('場合')?.snippet ?? '';
+  strictEqual(/^[、。]/.test(s), false, `先頭に句読点が残っている: ${s}`);
+  strictEqual(/[、。]$/.test(s), false, `末尾に句読点が残っている: ${s}`);
+  strictEqual(s.includes('{場合}'), true);
 });

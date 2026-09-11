@@ -62,6 +62,7 @@
     "typecheck": "tsc --noEmit",
     "types": "tsc -p tsconfig.types.json",
     "build:site": "node scripts/build-site.js",
+    "sandbox": "node scripts/sandbox.js",
     "check": "npm run test && npm run typecheck",
     "prepack": "npm run types"
   },

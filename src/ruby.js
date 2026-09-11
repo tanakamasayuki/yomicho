@@ -69,15 +69,25 @@ export function alignOkurigana(target, reading) {
 
 /**
  * 見出しと読みからルビの構成要素を決める。
+ *
+ * `aligned` が false のときは割り当てに失敗してグループルビに倒している。
+ * 見出しに仮名が含まれていればほぼ書き間違いなので（`持っ` に `も` だけ書いた等）、
+ * 呼び出し側で報告する。
+ *
  * @param {string} target
  * @param {string} reading `/` は当面取り除く（モノルビは未実装）
- * @returns {{parts: Part[], grouped: boolean}}
+ * @returns {{parts: Part[], grouped: boolean, aligned: boolean}}
  */
 export function assign(target, reading) {
   const flat = reading.replace(/\//g, '');
-  const aligned = alignOkurigana(target, flat);
-  if (aligned) return { parts: aligned, grouped: aligned.length === 1 };
-  return { parts: [{ text: target, reading: flat }], grouped: true };
+  const parts = alignOkurigana(target, flat);
+  if (parts) return { parts, grouped: parts.length === 1, aligned: true };
+  return { parts: [{ text: target, reading: flat }], grouped: true, aligned: false };
+}
+
+/** 見出しに仮名が混ざっているか。混ざっていて割り当てに失敗したら怪しい */
+export function hasKana(/** @type {string} */ text) {
+  return [...text].some((c) => isKana(c));
 }
 
 /**
