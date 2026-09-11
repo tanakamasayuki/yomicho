@@ -16,7 +16,7 @@ const { version } = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8
 const USAGE = `yomicho ${version}
 
   yomicho build      <input.md> [-b <book.tsv>] [-o <out.md>]
-  yomicho update     <input.md> [-b <book.tsv>] [-d <ref.tsv>]... [--known <chars.txt>] [--force]
+  yomicho update     <input.md> [-b <book.tsv>] [-d <ref.tsv>]... [--known <chars.txt>] [--full] [--force]
   yomicho unresolved <input.md> [-b <book.tsv>]           要対応の行を TSV で出す
   yomicho merge      <input.md> [-b <book.tsv>] < in.tsv  読みを取り込む（必ず + が付く）
   yomicho strip      <input.md> [-o <out.md>]
@@ -24,7 +24,8 @@ const USAGE = `yomicho ${version}
   -b  原稿辞書（既定: 原稿と同じ名前の .tsv）
   -d  参照辞書。近い順に並べる
   --known  既知文字リスト。含まれる文字だけの語にはルビを振らない
-  --force  > と ! の行を捨ててから update する
+  --full   通常は捨てる候補（カタカナ語・数値）も ? として記録する
+  --force  > ! ? の行を捨ててから update する
 
 コマンドラインの構文は暫定です（docs/spec.ja.md 12章）。
 `;
@@ -36,6 +37,7 @@ const { values, positionals } = parseArgs({
     dict: { type: 'string', short: 'd', multiple: true, default: [] },
     known: { type: 'string' },
     force: { type: 'boolean', default: false },
+    full: { type: 'boolean', default: false },
     out: { type: 'string', short: 'o' },
     help: { type: 'boolean', short: 'h', default: false },
   },
@@ -85,6 +87,7 @@ if (command === 'strip') {
     matcher: buildMatcher(resolveDicts([book, refs]).values()),
     segmenter: intlWords(),
     known,
+    full: values.full,
   });
   writeFileSync(bookPath, formatDict(result.book.values()));
   process.stderr.write(`${bookPath}: ${result.book.size} 行 (+${result.added.length}) / 要対応 ${result.unresolved.length}\n`);

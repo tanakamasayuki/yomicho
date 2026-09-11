@@ -17,6 +17,9 @@ import { protectedRanges } from './protect.js';
 
 const HAN = /\p{Script=Han}/u;
 const ATOMIC = /[A-Za-z0-9_+.-]*[A-Za-z][A-Za-z0-9_+.-]*/g;
+/** --full のとき。英字を含まない数値のかたまりも拾う */
+const ATOMIC_FULL = /[A-Za-z0-9_+.-]*[A-Za-z0-9][A-Za-z0-9_+.-]*/g;
+const KATAKANA = /^[ァ-ヺー・]+$/;
 
 /** 漢字の連続をひとかたまりとする。依存なし。送り仮名は拾えない。 */
 export const kanjiRun = /** @type {Segmenter} */ (
@@ -77,9 +80,10 @@ export function intlMergedHan(locale = 'ja') {
  * @param {string} text
  * @param {Matcher} matcher
  * @param {Segmenter} segmenter
+ * @param {boolean} [full] 漢字を含まない語や数値も拾う（`?` として記録するため）
  * @returns {Candidate[]}
  */
-export function collectCandidates(text, matcher, segmenter) {
+export function collectCandidates(text, matcher, segmenter, full = false) {
   /** @type {Candidate[]} */
   const out = [];
   /** @type {Array<[number, number]>} */
@@ -100,7 +104,7 @@ export function collectCandidates(text, matcher, segmenter) {
     }
     const taken = new Uint8Array(chunk.length);
     // 英数字トークンは全体で1候補
-    for (const m of chunk.matchAll(ATOMIC)) {
+    for (const m of chunk.matchAll(full ? ATOMIC_FULL : ATOMIC)) {
       const at = m.index ?? 0;
       let free = true;
       for (let i = at; i < at + m[0].length; i++) if (covered[i]) free = false;
@@ -115,7 +119,9 @@ export function collectCandidates(text, matcher, segmenter) {
       else if (!free && spanStart >= 0) {
         const span = chunk.slice(spanStart, i);
         for (const w of segmenter(span)) {
-          if (!HAN.test(w.text)) continue;
+          // 漢字を含まない語は通常は捨てる。--full ではカタカナ語だけ拾う。
+          // ひらがなはそのまま読めるので、どちらでも拾わない。
+          if (!HAN.test(w.text) && !(full && w.text.length >= 2 && KATAKANA.test(w.text))) continue;
           out.push({ text: w.text, start: cs + spanStart + w.start, end: cs + spanStart + w.end });
         }
         spanStart = -1;

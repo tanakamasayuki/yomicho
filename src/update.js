@@ -58,6 +58,36 @@ export function makeSnippet(text, start, end, width) {
   return body.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * 読みを求めず `?` として記録するだけにするか（7.2）。
+ *
+ * 数字を含む英数字トークンは型番とみなす。`BMP280` `SHT40` `U001-D` `10cm` `0xFFE01F` の類で、
+ * 普通ルビを振らない。英字だけのトークン（`KeyBridge` `Arduino`）は名前なので作業ゾーンに残す。
+ *
+ * ドットを含むものも同じ扱いにする。ファイル名・メソッド名・ドメイン（`sketch.yaml`
+ * `Serial.begin` `lang-ship.com`）ばかりで、読ませたいものがない。
+ * ハイフンは逆で、`E-Paper` `ESP-IDF` `Lang-ship` のように名前に使われるので対象にしない。
+ *
+ * 型番でも読ませたいものはある（`M5Stack` `ESP32` `CH32V003`）が、それらは参照辞書に
+ * 登録済みで作業ゾーンには来ない。ここで判断するのは未登録のものだけなので、
+ * 「新しく出てきた英数字混じりは型番」と賭けるほうが当たる。
+ *
+ * どちらにしても出力は変わらない（5.3 によりトークンの一部にはルビが付かない）。
+ * 読ませたくなったら `?` を消せばよい。
+ *
+ * @param {string} text
+ * @param {boolean} full
+ */
+function isQuiet(text, full) {
+  const HAN = /\p{Script=Han}/u;
+  if (HAN.test(text)) return false;
+  if (/[0-9]/.test(text)) return true;
+  if (text.includes('.')) return true;
+  if (!/^[A-Za-z]/.test(text)) return true;
+  // --full でだけ拾うカタカナ語も静かにする
+  return !/[A-Za-z]/.test(text) && full;
+}
+
 /** 見出しに含まれる文字がすべて既知なら true（8.1） */
 function allKnown(/** @type {string} */ pattern, /** @type {Set<string>} */ known) {
   const HAN = /\p{Script=Han}/u;
@@ -85,10 +115,11 @@ function allKnown(/** @type {string} */ pattern, /** @type {Set<string>} */ know
  * @param {Matcher} args.matcher book と refs を重ねたマッチャ
  * @param {Segmenter} args.segmenter
  * @param {Set<string>} [args.known] 既知文字リスト
+ * @param {boolean} [args.full] 通常は捨てる候補も `?` として記録する
  * @param {number} [args.width] スニペットの前後文字数
  * @returns {UpdateResult}
  */
-export function update({ text, book, refs, matcher, segmenter, known, width = 12 }) {
+export function update({ text, book, refs, matcher, segmenter, known, full = false, width = 12 }) {
   /** @type {Map<string, Entry>} */
   const out = new Map(book);
   /** @type {string[]} */
@@ -111,13 +142,14 @@ export function update({ text, book, refs, matcher, segmenter, known, width = 12
   }
 
   // 2. 覆えなかった範囲の候補。読みは分からないので空欄で足す
-  for (const c of collectCandidates(text, matcher, segmenter)) {
+  for (const c of collectCandidates(text, matcher, segmenter, full)) {
     remember(c.text, c.start, c.end);
     if (out.has(c.text)) continue;
     const ref = refs.get(c.text);
     const base = { key: c.text, ...parseHeadword(c.text), snippet: '', order: 0, line: 0 };
     if (ref) out.set(c.text, { ...base, state: '>', reading: ref.reading });
     else if (known && allKnown(c.text, known)) out.set(c.text, { ...base, state: '!', reading: '' });
+    else if (isQuiet(c.text, full)) out.set(c.text, { ...base, state: '?', reading: '' });
     else out.set(c.text, { ...base, state: '', reading: '' });
     added.push(c.text);
   }
@@ -185,7 +217,7 @@ export function mergeReadings(book, tsv) {
 }
 
 /**
- * 機械のキャッシュ（`>` と `!`）を捨てる。`--force` の前半（7.2）。
+ * 機械のキャッシュ（`>` `!` `?`）を捨てる。`--force` の前半（7.5）。
  * 人の判断（記号なし・`#`）と作業中（`+`・空欄）には触れない。
  * @param {Map<string, Entry>} book
  * @returns {{book: Map<string, Entry>, dropped: string[]}}
@@ -195,7 +227,7 @@ export function dropCache(book) {
   const out = new Map();
   /** @type {string[]} */ const dropped = [];
   for (const [key, entry] of book) {
-    if (entry.state === '>' || entry.state === '!') dropped.push(key);
+    if (entry.state === '>' || entry.state === '!' || entry.state === '?') dropped.push(key);
     else out.set(key, entry);
   }
   return { book: out, dropped };

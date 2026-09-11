@@ -1,5 +1,7 @@
 // @ts-check
 // 原稿と辞書の照合。docs/spec.ja.md 5章。
+import { participatesInMatch } from './dict.js';
+
 /** @typedef {import('./dict.js').Entry} Entry */
 
 /**
@@ -29,6 +31,7 @@ export function buildMatcher(entries) {
   /** @type {Map<string, Entry[]>} */
   const byFirst = new Map();
   for (const e of entries) {
+    if (!participatesInMatch(e)) continue;
     const head = e.pattern[e.targetStart];
     if (head === undefined) continue;
     const bucket = byFirst.get(head);

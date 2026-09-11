@@ -133,3 +133,89 @@ test('--force は機械のキャッシュだけを捨てる', () => {
   deepStrictEqual(d.dropped.sort(), ['引用', '除外']);
   deepStrictEqual([...d.book.keys()].sort(), ['未定', '未承認', '確定', '無視'].sort());
 });
+
+test('--full はカタカナ語と数値を ? として記録する', () => {
+  const text = '10Aのセンサユニットを280個。';
+  const normal = update({
+    text, book: new Map(), refs: new Map(),
+    matcher: buildMatcher([]), segmenter: intlWords(),
+  });
+  deepStrictEqual([...normal.book.keys()].sort(), ['10A', '個']);
+
+  const full = update({
+    text, book: new Map(), refs: new Map(),
+    matcher: buildMatcher([]), segmenter: intlWords(), full: true,
+  });
+  strictEqual(full.book.get('280')?.state, '?');
+  strictEqual(full.book.get('センサユニット')?.state, '?');
+  strictEqual(full.unresolved.length, normal.unresolved.length, '作業ゾーンは増えない');
+});
+
+test('? は照合に参加しないので中の語を邪魔しない', () => {
+  const book = parseDict('センサユニット\t?\nセンサ\tせんさ\n').entries;
+  const out = annotate('センサユニット', buildMatcher(book.values())).text;
+  strictEqual(out, '<ruby>センサ<rt>せんさ</rt></ruby>ユニット');
+});
+
+test('? を消すと次の update で作業ゾーンに入る', () => {
+  const text = 'センサユニットを使う。';
+  const first = update({
+    text, book: new Map(), refs: new Map(),
+    matcher: buildMatcher([]), segmenter: intlWords(), full: true,
+  });
+  strictEqual(first.book.get('センサユニット')?.snippet, '', '? にはスニペットを付けない');
+  const cleared = parseDict(formatDict(first.book.values()).replace('センサユニット\t?', 'センサユニット\t')).entries;
+  const second = update({
+    text, book: cleared, refs: new Map(),
+    matcher: buildMatcher(cleared.values()), segmenter: intlWords(), full: true,
+  });
+  strictEqual(second.book.get('センサユニット')?.state, '');
+  strictEqual(second.book.get('センサユニット')?.snippet, '{センサユニット}を使う。');
+});
+
+test('--force は ? も捨てる', () => {
+  const book = parseDict('確定\tかくてい\n収集\t?\n引用\t>いんよう\n').entries;
+  const d = dropCache(book);
+  deepStrictEqual(d.dropped.sort(), ['収集', '引用']);
+  deepStrictEqual([...d.book.keys()], ['確定']);
+});
+
+test('数字を含むトークンは型番とみなして ?、英字だけは作業ゾーン', () => {
+  const text = 'BMP280 と 10cm と 0xFFE01F と .h と U001 と KeyBridge。';
+  const r = update({
+    text, book: new Map(), refs: new Map(),
+    matcher: buildMatcher([]), segmenter: intlWords(),
+  });
+  // 型番・量・生の値は聞かない
+  for (const k of ['BMP280', 'U001', '10cm', '0xFFE01F', '.h']) {
+    strictEqual(r.book.get(k)?.state, '?', `${k} は ? になる`);
+  }
+  // 英字だけの名前は聞く
+  strictEqual(r.book.get('KeyBridge')?.state, '');
+});
+
+test('参照辞書にあれば型番でも読みが付く', () => {
+  const r = run('ESP32を使う。', '', 'ESP32\tイーエスピーサンニー\n');
+  strictEqual(r.book.get('ESP32')?.state, '>', '登録済みなら ? にはならない');
+  strictEqual(r.book.get('ESP32')?.reading, 'イーエスピーサンニー');
+});
+
+test('? にしても出力は変わらない（5.3 によりトークンの一部は元々マッチしない）', () => {
+  const quiet = parseDict('10cm\t?\ncm\tセンチ\n').entries;
+  const blank = parseDict('10cm\t\ncm\tセンチ\n').entries;
+  const text = '長さは10cmです。';
+  strictEqual(annotate(text, buildMatcher(quiet.values())).text, text);
+  strictEqual(annotate(text, buildMatcher(blank.values())).text, text);
+});
+
+test('ドットを含むトークンも ?、ハイフンは名前に使われるので対象外', () => {
+  const text = 'sketch.yaml と Serial.begin と E-Paper と KeyBridge。';
+  const r = update({
+    text, book: new Map(), refs: new Map(),
+    matcher: buildMatcher([]), segmenter: intlWords(),
+  });
+  strictEqual(r.book.get('sketch.yaml')?.state, '?');
+  strictEqual(r.book.get('Serial.begin')?.state, '?');
+  strictEqual(r.book.get('E-Paper')?.state, '', 'ハイフンは名前に使われる');
+  strictEqual(r.book.get('KeyBridge')?.state, '');
+});
