@@ -38,7 +38,7 @@ test('壊れた行はエラーとして集め、他の行は読む', () => {
 
 test('3列目をスニペットとして読む', () => {
   const { entries } = parseDict('未知製品\t\t新型の{未知製品}を発表した\n');
-  strictEqual(entries.get('未知製品')?.snippet, '新型の{未知製品}を発表した');
+  deepStrictEqual(entries.get('未知製品')?.snippets, ['新型の{未知製品}を発表した']);
 });
 
 test('確定 → # → ! → * → > → 空欄 → + → ? の順に並べる', () => {

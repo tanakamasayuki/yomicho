@@ -15,7 +15,7 @@ export const SIGILS = new Set(['>', '+', '#', '!', '*', '?']);
  * @property {number} targetEnd   pattern 内での置換対象の終了位置
  * @property {State}  state       状態記号
  * @property {string} reading     記号を除いた読み（`/` を含みうる）
- * @property {string} snippet     3列目。無ければ空文字
+ * @property {string[]} snippets  3列目以降。出現箇所の抜粋。無ければ空配列
  * @property {number} order       辞書の探索順（小さいほど優先）
  * @property {number} line        元ファイルの行番号（1 始まり）
  */
@@ -82,11 +82,11 @@ export function parseDict(text, order = 0) {
     const cols = raw.split('\t');
     const key = cols[0];
     const readingField = cols.length > 1 ? cols[1] : '';
-    const snippet = cols.length > 2 ? cols.slice(2).join('\t') : '';
+    const snippets = cols.slice(2).filter((x) => x !== '');
     try {
       const { pattern, targetStart, targetEnd } = parseHeadword(key);
       const { state, reading } = parseReading(readingField);
-      entries.set(key, { key, pattern, targetStart, targetEnd, state, reading, snippet, order, line: i + 1 });
+      entries.set(key, { key, pattern, targetStart, targetEnd, state, reading, snippets, order, line: i + 1 });
     } catch (err) {
       errors.push({ line: i + 1, text: raw, message: err instanceof Error ? err.message : String(err) });
     }
@@ -99,7 +99,7 @@ export function parseDict(text, order = 0) {
  * @param {Entry} e
  */
 export function sortRank(e) {
-  if (e.state === '') return e.reading === '' ? 5 : 0;
+  if (e.state === '') return hasReading(e) ? 0 : 5;
   // 5 は「未解決だが今回の原稿には出ていない」。作業ゾーン（6=+, 7=?）の手前に置く
   return { '#': 1, '!': 2, '*': 3, '>': 4, '+': 6, '?': 7 }[e.state];
 }
@@ -112,10 +112,7 @@ export function sortRank(e) {
 export function formatDict(entries) {
   const list = [...entries].sort((a, b) => sortRank(a) - sortRank(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return list
-    .map((e) => {
-      const reading = e.state + e.reading;
-      return e.snippet ? `${e.key}\t${reading}\t${e.snippet}` : `${e.key}\t${reading}`;
-    })
+    .map((e) => [e.key, e.state + e.reading, ...e.snippets].join('\t'))
     .join('\n') + (list.length ? '\n' : '');
 }
 
@@ -135,9 +132,25 @@ export function resolveDicts(dicts) {
   return out;
 }
 
-/** ルビを出す対象になるか（`#` `!` `?` と未定は出さない） */
+/** 候補の区切り。読みに現れない文字を使う */
+export const CANDIDATE_SEP = '|';
+
+/**
+ * 読みが「候補の並び」か。読みが割れる語を一括辞書から取り込むときに使う。
+ * まだ読みが決まっていないのと同じ扱いにする（ルビは出さず、人に聞く）。
+ */
+export function isCandidates(/** @type {string} */ reading) {
+  return reading.includes(CANDIDATE_SEP);
+}
+
+/** 読みが決まっているか。空欄でも候補の並びでもない */
+export function hasReading(/** @type {Entry} */ e) {
+  return e.reading !== '' && !isCandidates(e.reading);
+}
+
+/** ルビを出す対象になるか（`#` `!` `?` と未定と候補は出さない） */
 export function producesRuby(/** @type {Entry} */ e) {
-  return (e.state === '' || e.state === '>' || e.state === '+') && e.reading !== '';
+  return (e.state === '' || e.state === '>' || e.state === '+') && hasReading(e);
 }
 
 /**

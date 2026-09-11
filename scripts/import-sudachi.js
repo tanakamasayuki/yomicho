@@ -10,10 +10,12 @@
 //
 //     --single-kanji     1文字の漢字も入れる（既定は除く。`分` `日` のような
 //                        読み分けの多い字を入れると `十分` `三日` が誤爆するため）
-//     --ambiguous <how>  読みが複数ある語の扱い。既定は blank
-//                          blank … 読みを空欄にして入れる（推奨）
-//                          skip  … 入れない
-//                          keep  … コスト最小の読みで入れる
+//     --ambiguous <how>  読みが複数ある語の扱い。既定は candidates
+//                          candidates … 候補を `|` で並べる（推奨。消すだけで済む）
+//                          blank      … 読みを空欄にする
+//                          skip       … 入れない
+//                          keep       … コスト最小の読みで入れる
+//     --max-candidates N 候補の上限。既定 3
 //
 //   読みが割れる語を skip すると、その語が辞書から消えて中の短い語が露出する
 //   （`日本` を落とすと `日本` が `日|本(ほん)` になる）。blank なら照合はするので
@@ -26,12 +28,14 @@ const outIndex = args.indexOf('-o');
 const out = outIndex >= 0 ? args[outIndex + 1] : null;
 const singleKanji = args.includes('--single-kanji');
 const ambIndex = args.indexOf('--ambiguous');
-const ambiguousMode = ambIndex >= 0 ? args[ambIndex + 1] : 'blank';
-if (!['blank', 'skip', 'keep'].includes(ambiguousMode)) {
-  process.stderr.write(`--ambiguous は blank / skip / keep のいずれか\n`);
+const ambiguousMode = ambIndex >= 0 ? args[ambIndex + 1] : 'candidates';
+if (!['candidates', 'blank', 'skip', 'keep'].includes(ambiguousMode)) {
+  process.stderr.write(`--ambiguous は candidates / blank / skip / keep のいずれか\n`);
   process.exit(1);
 }
-const valueAt = new Set([outIndex, ambIndex].filter((i) => i >= 0).map((i) => i + 1));
+const maxIndex = args.indexOf('--max-candidates');
+const maxCandidates = maxIndex >= 0 ? Number(args[maxIndex + 1]) || 3 : 3;
+const valueAt = new Set([outIndex, ambIndex, maxIndex].filter((i) => i >= 0).map((i) => i + 1));
 const inputs = args.filter((a, i) => !a.startsWith('-') && !valueAt.has(i));
 if (!out || inputs.length === 0) {
   process.stderr.write('usage: import-sudachi.js <lex.csv...> -o <out.tsv> [--single-kanji]\n');
@@ -81,12 +85,24 @@ function parseCsvLine(/** @type {string} */ line) {
   return cols;
 }
 
-/** @type {Map<string, {reading: string, cost: number}>} */
+/**
+ * 連濁（先頭の濁点・半濁点）を外す。`びき` → `ひき`。
+ * `引き` の ひき|びき|ぴき のように、連濁の違いだけで割れている語をまとめるため。
+ */
+const VOICED = 'がぎぐげござじずぜぞだぢづでどばびぶべぼぱぴぷぺぽ';
+const PLAIN = 'かきくけこさしすせそたちつてとはひふへほはひふへほ';
+function unvoiceHead(/** @type {string} */ reading) {
+  const i = VOICED.indexOf(reading[0]);
+  return i < 0 ? reading : PLAIN[i] + reading.slice(1);
+}
+
+/** 見出しごとに、読みとコストを集める */
+/** @type {Map<string, Array<{reading: string, cost: number}>>} */
 const dict = new Map();
-/** 読みが割れた見出し。既定では捨てる */
-/** @type {Set<string>} */
-const ambiguous = new Set();
-const stat = { lines: 0, noKanji: 0, skipPos: 0, noReading: 0, single: 0, same: 0, ambiguous: 0, kept: 0 };
+const stat = {
+  lines: 0, noKanji: 0, skipPos: 0, noReading: 0, single: 0, same: 0,
+  rendaku: 0, ambiguous: 0, kept: 0,
+};
 
 for (const path of inputs) {
   const rl = createInterface({ input: createReadStream(path), crlfDelay: Infinity });
@@ -118,25 +134,43 @@ for (const path of inputs) {
       continue;
     }
     const cost = Number(c[3]) || 0;
-    const prev = dict.get(surface);
-    if (prev && prev.reading !== reading) ambiguous.add(surface);
-    // 同じ表記が何度も出る。コストの低いほうを採る。
-    // ただしコストは頻度ではないので、これで正しい読みが選べる保証はない。
-    if (!prev || cost < prev.cost) dict.set(surface, { reading, cost });
+    const list = dict.get(surface);
+    if (!list) dict.set(surface, [{ reading, cost }]);
+    else {
+      const prev = list.find((x) => x.reading === reading);
+      if (!prev) list.push({ reading, cost });
+      else if (cost < prev.cost) prev.cost = cost;
+    }
   }
 }
-if (ambiguousMode !== 'keep') {
-  for (const key of ambiguous) {
-    if (ambiguousMode === 'skip') dict.delete(key);
-    else dict.set(key, { reading: '', cost: 0 });
+/** 見出しごとに最終的な読み欄を決める。null は出力しない */
+function resolve(/** @type {Array<{reading: string, cost: number}>} */ list) {
+  const sorted = [...list].sort((a, b) => a.cost - b.cost);
+  if (sorted.length === 1) return sorted[0].reading;
+  // 連濁の違いだけなら清音にまとめる
+  const unvoiced = new Set(sorted.map((x) => unvoiceHead(x.reading)));
+  if (unvoiced.size === 1) {
+    stat.rendaku++;
+    return [...unvoiced][0];
   }
-  stat.ambiguous = ambiguous.size;
+  stat.ambiguous++;
+  if (ambiguousMode === 'keep') return sorted[0].reading;
+  if (ambiguousMode === 'blank') return '';
+  if (ambiguousMode === 'skip') return null;
+  // candidates: コスト順に並べる。コストは頻度ではないので順序は当てにならない
+  /** @type {string[]} */
+  const seen = [];
+  for (const x of sorted) if (!seen.includes(x.reading)) seen.push(x.reading);
+  return seen.slice(0, maxCandidates).join('|');
 }
-stat.kept = dict.size;
 
-const keys = [...dict.keys()].sort();
 const stream = createWriteStream(out);
-for (const key of keys) stream.write(`${key}\t${dict.get(key)?.reading}\n`);
+for (const key of [...dict.keys()].sort()) {
+  const reading = resolve(dict.get(key) ?? []);
+  if (reading === null) continue;
+  stat.kept++;
+  stream.write(`${key}\t${reading}\n`);
+}
 await new Promise((resolve) => stream.end(resolve));
 
 process.stdout.write(`${out}: ${stat.kept.toLocaleString()} 語\n`);
@@ -144,8 +178,6 @@ process.stdout.write(`  読み込み ${stat.lines.toLocaleString()} 行\n`);
 process.stdout.write(`  除外: 漢字なし ${stat.noKanji.toLocaleString()} / 記号 ${stat.skipPos.toLocaleString()} / `);
 process.stdout.write(`読みなし ${stat.noReading.toLocaleString()} / 表記と同じ ${stat.same.toLocaleString()}`);
 if (!singleKanji) process.stdout.write(` / 1文字漢字 ${stat.single.toLocaleString()}`);
-if (ambiguousMode !== 'keep') {
-  const how = ambiguousMode === 'skip' ? '除外' : '空欄で保持';
-  process.stdout.write(` / 読みが割れる語 ${stat.ambiguous.toLocaleString()}（${how}）`);
-}
 process.stdout.write('\n');
+process.stdout.write(`  連濁だけの違いでまとめた ${stat.rendaku.toLocaleString()} 語\n`);
+process.stdout.write(`  読みが割れる ${stat.ambiguous.toLocaleString()} 語 → ${ambiguousMode}\n`);

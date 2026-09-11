@@ -5,8 +5,8 @@ import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import {
-  annotate, buildMatcher, dropCache, formatDict, intlWords, mergeReadings,
-  parseDict, resolveDicts, stripRuby, unresolvedTsv, update,
+  annotate, buildMatcher, dropCache, formatDict, intlWords, mergeReadings, occurrences,
+  parseDict, resolveDicts, stripRuby, unresolvedDetail, unresolvedTsv, update,
 } from '../src/index.js';
 import { loadDicts } from '../src/node/index.js';
 
@@ -17,7 +17,7 @@ const USAGE = `yomicho ${version}
 
   yomicho build      <input.md> [-b <book.tsv>] [-o <out.md>]
   yomicho update     <input.md> [-b <book.tsv>] [-d <ref.tsv>]... [--known <chars.txt>] [--full] [--force]
-  yomicho unresolved <input.md> [-b <book.tsv>]           要対応の行を TSV で出す
+  yomicho unresolved <input.md> [-b <book.tsv>] [--all]   要対応の行を TSV で出す
   yomicho merge      <input.md> [-b <book.tsv>] < in.tsv  読みを取り込む（必ず + が付く）
   yomicho strip      <input.md> [-o <out.md>]
 
@@ -25,7 +25,8 @@ const USAGE = `yomicho ${version}
   -d  参照辞書。近い順に並べる
   --known  既知文字リスト。含まれる文字だけの語にはルビを振らない
   --full   通常は捨てる候補（カタカナ語・数値）も ? として記録する
-  --force  > ! ? の行を捨ててから update する
+  --force  > ! * の行を捨ててから update する
+  --all    unresolved で全出現箇所を並べる（読みが割れる語の判断用）
 
 コマンドラインの構文は暫定です（docs/spec.ja.md 12章）。
 `;
@@ -37,6 +38,7 @@ const { values, positionals } = parseArgs({
     dict: { type: 'string', short: 'd', multiple: true, default: [] },
     known: { type: 'string' },
     force: { type: 'boolean', default: false },
+    all: { type: 'boolean', default: false },
     full: { type: 'boolean', default: false },
     out: { type: 'string', short: 'o' },
     help: { type: 'boolean', short: 'h', default: false },
@@ -64,7 +66,12 @@ if (command === 'strip') {
   }
   emit(result.text);
 } else if (command === 'unresolved') {
-  process.stdout.write(unresolvedTsv(readBook()));
+  const book = readBook();
+  if (!values.all) {
+    process.stdout.write(unresolvedTsv(book));
+  } else {
+    process.stdout.write(unresolvedDetail(book, occurrences(source, buildMatcher(book.values()), book)));
+  }
 } else if (command === 'merge') {
   const book = readBook();
   const r = mergeReadings(book, readFileSync(0, 'utf8'));

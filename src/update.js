@@ -2,7 +2,7 @@
 // 原稿辞書の更新。docs/spec.ja.md 2章・4.3・6章。
 // 既存の行は書き換えない。足りない見出しを足し、要対応の行のスニペットだけ更新する。
 import { collectCandidates } from './collect.js';
-import { parseHeadword, SIGILS } from './dict.js';
+import { hasReading, isCandidates, parseHeadword, SIGILS } from './dict.js';
 import { tokenize } from './match.js';
 import { protectedRanges } from './protect.js';
 
@@ -12,7 +12,8 @@ import { protectedRanges } from './protect.js';
 
 /** 人の手を待っている行か（3.6 の作業ゾーン） */
 export function needsAttention(/** @type {Entry} */ e) {
-  return e.state === '+' || e.state === '?' || (e.state === '' && e.reading === '');
+  if (e.state === '+' || e.state === '?') return true;
+  return e.state === '' && !hasReading(e);
 }
 
 /**
@@ -125,18 +126,22 @@ function allKnown(/** @type {string} */ pattern, /** @type {Set<string>} */ know
  * @param {Set<string>} [args.known] 既知文字リスト
  * @param {boolean} [args.full] 通常は捨てる候補も `*` として記録する
  * @param {number} [args.width] スニペットの前後文字数
+ * @param {number} [args.maxSnippets] 候補つきの行に付けるスニペットの数
  * @returns {UpdateResult}
  */
-export function update({ text, book, refs, matcher, segmenter, known, full = false, width = 12 }) {
+export function update({ text, book, refs, matcher, segmenter, known, full = false, width = 12, maxSnippets = 3 }) {
   /** @type {Map<string, Entry>} */
   const out = new Map(book);
   /** @type {string[]} */
   const added = [];
-  /** @type {Map<string, {start: number, end: number}>} */
+  /** 見出しごとの全出現箇所 */
+  /** @type {Map<string, Array<{start: number, end: number}>>} */
   const seen = new Map();
 
   const remember = (/** @type {string} */ key, /** @type {number} */ start, /** @type {number} */ end) => {
-    if (!seen.has(key)) seen.set(key, { start, end });
+    const list = seen.get(key);
+    if (list) list.push({ start, end });
+    else seen.set(key, [{ start, end }]);
   };
 
   // 1. 一致したエントリ。原稿辞書に無いものは参照辞書から引いて `>` を付ける。
@@ -147,8 +152,8 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
     if (out.has(hit.entry.key)) continue;
     const ref = refs.get(hit.entry.key);
     if (!ref) continue;
-    const state = ref.state === '>' || ref.state === '' ? (ref.reading === '' ? '' : '>') : ref.state;
-    out.set(hit.entry.key, { ...ref, state, order: 0, snippet: '' });
+    const state = ref.state === '>' || ref.state === '' ? (hasReading(ref) ? '>' : '') : ref.state;
+    out.set(hit.entry.key, { ...ref, state, order: 0, snippets: [] });
     added.push(hit.entry.key);
   }
 
@@ -157,8 +162,8 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
     remember(c.text, c.start, c.end);
     if (out.has(c.text)) continue;
     const ref = refs.get(c.text);
-    const base = { key: c.text, ...parseHeadword(c.text), snippet: '', order: 0, line: 0 };
-    if (ref) out.set(c.text, { ...base, state: ref.reading === '' ? '' : '>', reading: ref.reading });
+    const base = { key: c.text, ...parseHeadword(c.text), snippets: [], order: 0, line: 0 };
+    if (ref) out.set(c.text, { ...base, state: hasReading(ref) ? '>' : '', reading: ref.reading });
     else if (known && allKnown(c.text, known)) out.set(c.text, { ...base, state: '!', reading: '' });
     else if (isQuiet(c.text, full)) out.set(c.text, { ...base, state: '*', reading: '' });
     else out.set(c.text, { ...base, state: '', reading: '' });
@@ -172,16 +177,58 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
   const unresolved = [];
   for (const [key, entry] of out) {
     const at = seen.get(key);
-    if (needsAttention(entry) && at) {
-      entry.snippet = makeSnippet(text, at.start, at.end, width);
+    if (needsAttention(entry) && at && at.length > 0) {
+      // 読みが割れる語（候補つき）は、1つの読みで通るか判断できるよう複数見せる
+      const max = isCandidates(entry.reading) ? maxSnippets : 1;
+      entry.snippets = at.slice(0, max).map((p) => makeSnippet(text, p.start, p.end, width));
       if (entry.state === '') entry.state = '?';
       unresolved.push(key);
     } else {
-      if (entry.snippet) entry.snippet = '';
+      if (entry.snippets.length) entry.snippets = [];
       if (entry.state === '?') entry.state = '';
     }
   }
   return { book: out, added, unresolved };
+}
+
+/**
+ * 要対応の見出しについて、原稿での全出現箇所を返す。
+ * 読みが割れる語で「1つの読みで通るか」を人が判断するために使う。
+ * @param {string} text
+ * @param {Matcher} matcher
+ * @param {Map<string, Entry>} book
+ * @param {number} [width]
+ * @returns {Map<string, string[]>}
+ */
+export function occurrences(text, matcher, book, width = 12) {
+  /** @type {Map<string, string[]>} */
+  const out = new Map();
+  for (const hit of scanEntries(text, matcher)) {
+    const entry = book.get(hit.entry.key);
+    if (!entry || !needsAttention(entry)) continue;
+    const list = out.get(hit.entry.key) ?? [];
+    list.push(makeSnippet(text, hit.start, hit.end, width));
+    out.set(hit.entry.key, list);
+  }
+  return out;
+}
+
+/**
+ * 要対応の行を、全出現箇所つきで書き出す。
+ * @param {Map<string, Entry>} book
+ * @param {Map<string, string[]>} occ
+ * @returns {string}
+ */
+export function unresolvedDetail(book, occ) {
+  const keys = [...occ.keys()].sort();
+  let out = '';
+  for (const key of keys) {
+    const entry = book.get(key);
+    if (!entry) continue;
+    out += `${key}\t${entry.state}${entry.reading}\n`;
+    for (const snippet of occ.get(key) ?? []) out += `\t${snippet}\n`;
+  }
+  return out;
 }
 
 /**
@@ -191,9 +238,9 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
  * @returns {string}
  */
 export function unresolvedTsv(book) {
-  const rows = [...book.values()].filter((e) => needsAttention(e) && e.snippet !== '');
+  const rows = [...book.values()].filter((e) => needsAttention(e) && e.snippets.length > 0);
   rows.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return rows.map((e) => `${e.key}\t${e.state}${e.reading}\t${e.snippet}`).join('\n') + (rows.length ? '\n' : '');
+  return rows.map((e) => [e.key, e.state + e.reading, ...e.snippets].join('\t')).join('\n') + (rows.length ? '\n' : '');
 }
 
 /**
