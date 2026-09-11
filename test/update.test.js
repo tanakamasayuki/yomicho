@@ -239,3 +239,14 @@ test('スニペットの両端から句読点を落とす', () => {
   strictEqual(/[、。]$/.test(s), false, `末尾に句読点が残っている: ${s}`);
   strictEqual(s.includes('{場合}'), true);
 });
+
+test('参照辞書の読みが空なら > ではなく未解決として取り込む', () => {
+  // 読みが割れる語を一括辞書から空欄で取り込むと、照合はするので中の短い語を守りつつ
+  // 人に読みを聞ける。`>` にすると黙って無ルビになり、聞かれないまま消える。
+  const r = run('日本の会社。', '', '日本\t\n本\tほん\n会社\tかいしゃ\n');
+  strictEqual(r.book.get('日本')?.state, '?', '未解決として作業ゾーンに出る');
+  strictEqual(r.book.get('会社')?.state, '>');
+  const out = annotate('日本の会社。', buildMatcher(r.book.values())).text;
+  strictEqual(out.includes('<ruby>本<rt>ほん</rt></ruby>'), false, '日本 が 本 を守る');
+  strictEqual(out, '日本の<ruby>会社<rt>かいしゃ</rt></ruby>。');
+});

@@ -139,13 +139,16 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
     if (!seen.has(key)) seen.set(key, { start, end });
   };
 
-  // 1. 一致したエントリ。原稿辞書に無いものは参照辞書から引いて `>` を付ける
+  // 1. 一致したエントリ。原稿辞書に無いものは参照辞書から引いて `>` を付ける。
+  //    参照辞書側の読みが空なら「その語は知っているが読みは未定」なので、
+  //    `>` ではなく未解決として取り込む（そうしないと黙って無ルビになる）。
   for (const hit of scanEntries(text, matcher)) {
     remember(hit.entry.key, hit.start, hit.end);
     if (out.has(hit.entry.key)) continue;
     const ref = refs.get(hit.entry.key);
     if (!ref) continue;
-    out.set(hit.entry.key, { ...ref, state: '>', order: 0, snippet: '' });
+    const state = ref.state === '>' || ref.state === '' ? (ref.reading === '' ? '' : '>') : ref.state;
+    out.set(hit.entry.key, { ...ref, state, order: 0, snippet: '' });
     added.push(hit.entry.key);
   }
 
@@ -155,7 +158,7 @@ export function update({ text, book, refs, matcher, segmenter, known, full = fal
     if (out.has(c.text)) continue;
     const ref = refs.get(c.text);
     const base = { key: c.text, ...parseHeadword(c.text), snippet: '', order: 0, line: 0 };
-    if (ref) out.set(c.text, { ...base, state: '>', reading: ref.reading });
+    if (ref) out.set(c.text, { ...base, state: ref.reading === '' ? '' : '>', reading: ref.reading });
     else if (known && allKnown(c.text, known)) out.set(c.text, { ...base, state: '!', reading: '' });
     else if (isQuiet(c.text, full)) out.set(c.text, { ...base, state: '*', reading: '' });
     else out.set(c.text, { ...base, state: '', reading: '' });
